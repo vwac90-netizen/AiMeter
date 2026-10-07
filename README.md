@@ -5,7 +5,9 @@ Claude Code · Codex · Cursor · Antigravity 의 「얼마나 남았나 / 언�
 
 > English summary is at the bottom.
 
-PC Up Check([pcupcheck.com](https://pcupcheck.com)) 도구 모음의 하나입니다. macOS 앱 [AgentGauge](https://github.com/ghostface2232/AgentGauge) 에서 아이디어를 얻어 Windows 용으로 새로 만들었습니다(코드는 가져오지 않았습니다).
+PC Up Check([pcupcheck.com](https://pcupcheck.com)) 도구 모음의 하나입니다. macOS 앱 **AgentGauge** 를 벤치마킹해 Windows 용으로 만들었습니다(코드는 새로 작성).
+
+> 벤치마킹 출처: AgentGauge — https://github.com/ghostface2232/AgentGauge
 
 ## 무엇을 보여 주나
 
@@ -79,7 +81,7 @@ Claude·Claude Code 는 Anthropic, Codex·ChatGPT 는 OpenAI, Cursor 는 Anysphe
 
 ## English summary
 
-AiMeter is a Windows tray app that shows how much of your AI coding tool limits (Claude Code, Codex, Cursor, Antigravity) is left and when it refills — on a taskbar strip, a tray ring icon and a popup (gauges / battery + 7-day timeline / monthly token treemap). Unknown values are shown as "unknown", never as 0%.
+AiMeter is a Windows app benchmarked on the macOS app [AgentGauge](https://github.com/ghostface2232/AgentGauge) (code written from scratch). It is a tray app that shows how much of your AI coding tool limits (Claude Code, Codex, Cursor, Antigravity) is left and when it refills — on a taskbar strip, a tray ring icon and a popup (gauges / battery + 7-day timeline / monthly token treemap). Unknown values are shown as "unknown", never as 0%.
 
 It reuses the sign-in each tool already stored on your PC (read-only) and calls the same usage endpoints those tools use. These endpoints are **not documented public APIs** and may change. Tokens are never stored, logged or sent anywhere else.
 
