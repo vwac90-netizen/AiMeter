@@ -166,14 +166,14 @@ public sealed class ClaudeProvider : IUsageProvider
                 switch (Text(l, "kind"))
                 {
                     case "session":
-                        list.Add(new UsageWindow("session", S.T("5시간", "5-hour"), pct, reset, fiveHour));
+                        list.Add(new UsageWindow("session", LabelFor("session"), pct, reset, fiveHour));
                         break;
                     case "weekly_all":
-                        list.Add(new UsageWindow("weekly", S.T("주간 전체", "Weekly · all"), pct, reset, week));
+                        list.Add(new UsageWindow("weekly", LabelFor("weekly"), pct, reset, week));
                         break;
                     case "weekly_scoped":
                         string model = ScopedModelName(l) ?? S.T("모델", "model");
-                        list.Add(new UsageWindow("weekly:" + model, S.T($"주간 {model}", $"Weekly {model}"), pct, reset, week));
+                        list.Add(new UsageWindow("weekly:" + model, LabelFor("weekly:" + model), pct, reset, week));
                         break;
                     // 모르는 kind 는 뜻을 추측하지 않고 건너뛴다
                 }
@@ -184,9 +184,9 @@ public sealed class ClaudeProvider : IUsageProvider
         if (list.Count == 0)
         {
             if (root.TryGetProperty("five_hour", out var fh) && fh.ValueKind == JsonValueKind.Object)
-                list.Add(new UsageWindow("session", S.T("5시간", "5-hour"), Number(fh, "utilization"), Date(fh, "resets_at"), fiveHour));
+                list.Add(new UsageWindow("session", LabelFor("session"), Number(fh, "utilization"), Date(fh, "resets_at"), fiveHour));
             if (root.TryGetProperty("seven_day", out var sd) && sd.ValueKind == JsonValueKind.Object)
-                list.Add(new UsageWindow("weekly", S.T("주간 전체", "Weekly · all"), Number(sd, "utilization"), Date(sd, "resets_at"), week));
+                list.Add(new UsageWindow("weekly", LabelFor("weekly"), Number(sd, "utilization"), Date(sd, "resets_at"), week));
         }
 
         return list;
@@ -263,7 +263,8 @@ public sealed class ClaudeProvider : IUsageProvider
             if (!File.Exists(CachePath)) return;
             var c = JsonSerializer.Deserialize<CacheFile>(File.ReadAllText(CachePath));
             if (c is null) return;
-            lastGood = c.LastGood;
+            // [Part 266] 캐시의 라벨은 저장할 때의 언어다 — 언어를 바꾼 직후 「5시간」 이 영어 화면에 남았다. 키로 다시 만든다
+            lastGood = c.LastGood is { } g ? g with { Windows = g.Windows.Select(w => w with { Label = LabelFor(w.Key) }).ToList() } : null;
             lastAttempt = c.LastAttempt;
             cooldownUntil = c.CooldownUntil;
             failures = c.Failures;
@@ -273,6 +274,15 @@ public sealed class ClaudeProvider : IUsageProvider
             // 캐시를 못 읽으면 처음부터 — 캐시는 있으면 좋은 것이지 필수가 아니다
         }
     }
+
+    /// <summary>[Part 266] 한도 라벨의 단일 출처 — 응답을 읽을 때와 캐시를 읽을 때 같은 함수로 만든다.</summary>
+    private static string LabelFor(string key) => key switch
+    {
+        "session" => S.T("5시간", "5-hour"),
+        "weekly" => S.T("주간 전체", "Weekly · all"),
+        _ when key.StartsWith("weekly:", StringComparison.Ordinal) => S.T($"주간 {key[7..]}", $"Weekly {key[7..]}"),
+        _ => key,
+    };
 
     private void SaveCache()
     {

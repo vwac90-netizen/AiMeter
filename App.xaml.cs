@@ -33,6 +33,7 @@ public partial class App : Application
 
         var dispatcher = DispatcherQueue.GetForCurrentThread();
         var settings = SettingsStore.Load();
+        S.Apply(settings.Language); // [Part 266] 화면·공급자 문구를 만들기 전에 언어부터
         usage = new UsageService(new IUsageProvider[] { new ClaudeProvider(), new CodexProvider(), new CursorProvider(), new AntigravityProvider() }, settings, dispatcher);
         popover = new PopoverWindow(usage, settings, new ClaudeLogScanner());
 
@@ -75,6 +76,10 @@ public partial class App : Application
             strip.Update(usage.Snapshots);
         };
 
+        // [Part 266] 언어가 바뀌었다 — 앱을 다시 시작해 팝오버·스트립·트레이 메뉴·받아 온 라벨을 한 번에 새 언어로.
+        //   콤보 선택 처리 도중에 창을 닫지 않게 디스패처로 미룬다(Part 247)
+        popover.LanguageChanged += () => dispatcher.TryEnqueue(Restart);
+
         usage.Updated += () =>
         {
             tray.Update(usage.Snapshots);
@@ -89,10 +94,33 @@ public partial class App : Application
 
     private void Shutdown()
     {
+        Release();
+        Exit();
+    }
+
+    /// <summary>[Part 266] 같은 exe 를 다시 띄우고(팝오버를 바로 연다) 지금 것은 끝낸다. 단일 실행 뮤텍스를 먼저 놓아야 새 프로세스가 곧바로 끝나지 않는다.</summary>
+    private void Restart()
+    {
+        Release();
+        try
+        {
+            if (Environment.ProcessPath is string exe)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, "--show") { UseShellExecute = false });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // 다시 띄우지 못하면 그냥 끝낸다 — 사용자가 다시 실행하면 새 언어로 시작한다(설정은 이미 저장됨)
+        }
+        Exit();
+    }
+
+    private void Release()
+    {
         strip?.Dispose();
         tray?.Dispose();
         popover?.Close();
         singleInstance?.ReleaseMutex();
-        Exit();
+        singleInstance?.Dispose();
+        singleInstance = null;
     }
 }

@@ -52,6 +52,13 @@ public sealed class SettingsStore
     public const string BasisRemaining = "remaining";
     public const string BasisUsed = "used";
 
+    /// <summary>[Part 266] 언어 — auto(Windows 표시 언어) · ko · en. 바꾸면 앱을 다시 시작한다.</summary>
+    public string Language { get; set; } = LangAuto;
+
+    public const string LangAuto = "auto";
+    public const string LangKo = "ko";
+    public const string LangEn = "en";
+
     [System.Text.Json.Serialization.JsonIgnore] // [Part 255] 계산값 — 파일에 쓰면 GaugeBasis 와 엇갈려 보였다("ShowUsed": true + "remaining")
     public bool ShowUsed => GaugeBasis == BasisUsed;
 
@@ -70,6 +77,7 @@ public sealed class SettingsStore
                     if (loaded.ResetStyle is not (ResetAuto or ResetRemain or ResetClock or ResetBoth)) loaded.ResetStyle = ResetAuto;
                     if (loaded.DateStyle is not (DateShort or DateLong)) loaded.DateStyle = DateShort;
                     if (loaded.GaugeBasis is not (BasisRemaining or BasisUsed)) loaded.GaugeBasis = BasisRemaining;
+                    if (loaded.Language is not (LangAuto or LangKo or LangEn)) loaded.Language = LangAuto;
                     return loaded;
                 }
             }

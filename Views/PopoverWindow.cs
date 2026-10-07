@@ -57,6 +57,9 @@ public sealed class PopoverWindow : Window
     /// <summary>[Part 254] 게이지 기준(남은 양/쓴 양)이 바뀌었다 — App 이 스트립·링 아이콘을 다시 그린다.</summary>
     public event Action? GaugeBasisChanged;
 
+    /// <summary>[Part 266] 언어를 바꿨다 — App 이 앱을 다시 시작한다.</summary>
+    public event Action? LanguageChanged;
+
     public PopoverWindow(UsageService usage, SettingsStore settings, ClaudeLogScanner scanner)
     {
         this.usage = usage;
@@ -388,8 +391,19 @@ public sealed class PopoverWindow : Window
         string[] resets = { SettingsStore.ResetAuto, SettingsStore.ResetRemain, SettingsStore.ResetClock, SettingsStore.ResetBoth };
         string[] dates = { SettingsStore.DateShort, SettingsStore.DateLong };
         string[] bases = { SettingsStore.BasisRemaining, SettingsStore.BasisUsed };
+        string[] langs = { SettingsStore.LangAuto, SettingsStore.LangKo, SettingsStore.LangEn };
         body.Children.Add(Card(new List<FrameworkElement>
         {
+            // [Part 266] 언어 — 이름은 두 언어를 함께 적어 지금 언어를 못 읽어도 찾을 수 있게. 바꾸면 앱이 다시 시작된다
+            ComboRow(S.T("언어 · Language", "Language · 언어"),
+                new[] { S.T("자동 (Windows 따름)", "Auto (follow Windows)"), "한국어", "English" },
+                Array.IndexOf(langs, settings.Language), i =>
+                {
+                    if (langs[i] == settings.Language) return;
+                    settings.Language = langs[i];
+                    Save();
+                    LanguageChanged?.Invoke();
+                }),
             ComboRow(S.T("열었을 때 화면", "Opens to"),
                 new[] { S.T("계기판 — 언제 바닥나나", "Gauges — when it runs out"), S.T("배터리 — 언제 다시 차나", "Battery — when it refills"), S.T("트리맵 — 어디에 썼나", "Treemap — where it went") },
                 Array.IndexOf(views, settings.View), i =>
@@ -742,7 +756,7 @@ public sealed class PopoverWindow : Window
         {
             if (n >= 100_000_000) return $"{n / 100_000_000.0:0.##}억";
             if (n >= 10_000) return $"{n / 10_000.0:0.#}만";
-            return n.ToString("N0", CultureInfo.CurrentCulture);
+            return n.ToString("N0", S.Culture);
         }
         if (n >= 1_000_000_000) return $"{n / 1_000_000_000.0:0.##}B";
         if (n >= 1_000_000) return $"{n / 1_000_000.0:0.#}M";
@@ -899,7 +913,7 @@ public sealed class PopoverWindow : Window
         var startOfToday = new DateTimeOffset(nowLocal.Date, nowLocal.Offset);
         for (int d = 0; d <= 7; d++)
         {
-            string name = d == 0 ? S.T("오늘", "Today") : startOfToday.AddDays(d).ToString("ddd", CultureInfo.CurrentCulture);
+            string name = d == 0 ? S.T("오늘", "Today") : startOfToday.AddDays(d).ToString("ddd", S.Culture);
             var tb = Small(name, Text2);
             tb.Width = 36;
             tb.TextAlignment = TextAlignment.Center;
@@ -1013,16 +1027,16 @@ public sealed class PopoverWindow : Window
     {
         var local = t.ToLocalTime().AddSeconds(30); // 분 단위 반올림 — 서버가 10:00:00 앞뒤 밀리초를 섞어 보내 18:59/19:00 으로 갈렸다
         int days = (local.Date - DateTime.Today).Days;
-        if (days == 0) return local.ToString("HH:mm", CultureInfo.CurrentCulture);
+        if (days == 0) return local.ToString("HH:mm", S.Culture);
         // [Part 250] 6일 넘게 남으면 요일만으로는 「이번 주」 로 읽힌다(Cursor 청구 주기 11/7 이 「토」, 다음 주 수요일이 「수」 로 보였다) → 날짜까지
         if (days >= 6)
         {
             bool longDate = dateStyle == SettingsStore.DateLong; // [Part 254] 11-6(금) / 11월 6일(금)
             // 긴 날짜는 시각을 뺀다 — 계기판 칸에서 「11월 6일(금) 11:01…」 로 잘렸다. 엿새 넘게 남은 초기화는 날짜면 충분하다
             string fmt = S.IsKorean ? (longDate ? "M월 d일(ddd)" : "M/d(ddd) HH:mm") : (longDate ? "MMMM d" : "MMM d HH:mm");
-            return local.ToString(fmt, CultureInfo.CurrentCulture);
+            return local.ToString(fmt, S.Culture);
         }
-        return local.ToString("ddd HH:mm", CultureInfo.CurrentCulture);
+        return local.ToString("ddd HH:mm", S.Culture);
     }
 
     private static string Until(DateTimeOffset reset)

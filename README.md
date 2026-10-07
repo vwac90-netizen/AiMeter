@@ -40,7 +40,7 @@ Claude Code · Codex · Cursor · Antigravity 의 사용 한도가 **얼마나 �
 - **필요 없는 도구는 숨기기** — 무료 플랜이라 볼 게 없는 도구는 스위치 하나로 모든 화면에서 뺍니다.
 - **소진 예측** — 지금 속도가 이어지면 초기화 전에 바닥나는지 알려 줍니다. 쓴 양이 너무 적을 때는 억지로 예측하지 않습니다.
 - **Antigravity 는 앱이 꺼져 있어도** 읽습니다(설치된 엔진을 잠깐 띄워 묻고 바로 끕니다).
-- Windows 시작 때 자동 실행 · 한국어/영어 화면(Windows 표시 언어를 따름).
+- Windows 시작 때 자동 실행 · 한국어/영어 화면 — 설정의 「언어 · Language」에서 자동(Windows 표시 언어)·한국어·English 중 고릅니다(0.1.10~).
 
 ## 필요한 것
 
@@ -65,7 +65,7 @@ AiMeter 에는 따로 큰 창이 없습니다. 끄려면 트레이 아이콘을 
 - 그 밖의 PC 에서는 「Windows의 PC 보호」 파란 창이 뜰 수 있어요 → **「추가 정보」 → 「실행」**.
 - 받은 파일이 맞는지는 릴리스 노트의 **SHA-256** 과 비교해 확인할 수 있습니다.
   ```powershell
-  Get-FileHash .\AiMeter-0.1.9-win-x64.zip -Algorithm SHA256
+  Get-FileHash .\AiMeter-0.1.10-win-x64.zip -Algorithm SHA256
   ```
 
 ## 로그인 정보와 데이터
@@ -133,5 +133,6 @@ dotnet publish -c Release -r win-x64 -o out
 - **Download**: [latest release](https://github.com/vwac90-netizen/AiMeter/releases/latest) → extract → run `AiMeter.exe` (self-contained, no .NET install; Windows 10/11 x64, verified on Windows 11).
 - **Not code-signed yet**: Smart App Control blocks it; SmartScreen may warn ("More info" → "Run anyway"). Each release lists the zip's SHA-256. You can also build it yourself with the .NET 10 SDK.
 - **Privacy**: it reuses the sign-in each tool already stored on your PC (read-only) and calls only the usage endpoint that tool itself uses. Tokens are never stored, logged or sent. These endpoints are not documented public APIs and may change.
+- **Language**: Korean or English — pick it in settings ("Language · 언어"); Auto follows the Windows display language.
 - The taskbar strip measures your taskbar's app buttons and shrinks itself (fewer bars → numbers only) so it never covers them.
 - Not affiliated with Anthropic, OpenAI, Anysphere or Google. MIT licensed.
