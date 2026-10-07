@@ -65,7 +65,7 @@ AiMeter 에는 따로 큰 창이 없습니다. 끄려면 트레이 아이콘을 
 - 그 밖의 PC 에서는 「Windows의 PC 보호」 파란 창이 뜰 수 있어요 → **「추가 정보」 → 「실행」**.
 - 받은 파일이 맞는지는 릴리스 노트의 **SHA-256** 과 비교해 확인할 수 있습니다.
   ```powershell
-  Get-FileHash .\AiMeter-0.1.10-win-x64.zip -Algorithm SHA256
+  Get-FileHash .\AiMeter-0.1.11-win-x64.zip -Algorithm SHA256
   ```
 
 ## 로그인 정보와 데이터

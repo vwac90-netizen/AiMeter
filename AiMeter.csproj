@@ -11,7 +11,7 @@
     <AssemblyName>AiMeter</AssemblyName>
     <Product>AiMeter</Product>
     <Company>PC Up Check</Company>
-    <Version>0.1.10</Version>
+    <Version>0.1.11</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
     <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU'">x64</Platform>

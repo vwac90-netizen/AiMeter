@@ -423,7 +423,7 @@ public sealed class PopoverWindow : Window
                     GaugeBasisChanged?.Invoke();
                 }),
             ComboRow(S.T("초기화 표기", "Reset time"),
-                new[] { S.T("자동 (하루 안은 남은 시간)", "Auto (countdown within a day)"), S.T("남은 시간 · 1시간 34분 후", "Countdown · in 1h 34m"), S.T("시각 · 토 19:00", "Clock · Sat 19:00"), S.T("둘 다 · 토 19:00 · 2일 후", "Both · Sat 19:00 · in 2d") },
+                new[] { S.T("자동 (하루 안은 남은 시간)", "Auto (countdown <1 day)") /* [Part 268] 196px 칸에서 잘림 → 줄임 */, S.T("남은 시간 · 1시간 34분 후", "Countdown · in 1h 34m"), S.T("시각 · 토 19:00", "Clock · Sat 19:00"), S.T("둘 다 · 토 19:00 · 2일 후", "Both · Sat 19:00 · in 2d") },
                 Array.IndexOf(resets, settings.ResetStyle), i =>
                 {
                     if (resets[i] == settings.ResetStyle) return;
