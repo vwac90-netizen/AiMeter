@@ -201,14 +201,23 @@ public sealed class PopoverWindow : Window
         // [Part 287] WinUI 처럼 root.Measure 로 재면 안 된다 — Avalonia 는 root 가 유효하면 저장값을 돌려줘 바뀐 본문을 못 잰다
         //   (실측: 본문 9줄인데 66.5×15 · 팝오버가 머리글만 보이게 잘림). 배치를 한 번 돌리고 스크롤 안 내용 높이 + 아래 줄 높이를 쓴다.
         //   스크롤 뷰어는 내용에 무한 높이를 주므로 창 높이와 무관하게 본문 전체 높이가 나온다.
-        UpdateLayout();
+        // [Part 293] 그래도 처음 열 때(아직 보이지 않는 창)는 배치를 건너뛰어 0 이 나왔다 — 값을 받아 다시 그릴 때까지 3~6초 동안
+        //   71px 띠가 작업 표시줄 위에 겹쳤다(실측). Tools Part 291 처럼 무효화하고 무한 높이로 직접 잰다
+        scrollContent.InvalidateMeasure();
+        footerBorder.InvalidateMeasure();
+        scrollContent.Measure(new Size(PopWidth, double.PositiveInfinity));
+        footerBorder.Measure(new Size(PopWidth, double.PositiveInfinity));
         double height = Math.Min(Math.Ceiling(scrollContent.DesiredSize.Height + footerBorder.DesiredSize.Height), maxHeight);
         Height = height;
 
         int w = (int)Math.Round(PopWidth * scale);
         int h = (int)Math.Round(height * scale);
         int m = (int)Math.Round(margin * scale);
-        Position = new PixelPoint(area.X + area.Width - w - m, area.Y + area.Height - h - m);
+        var position = new PixelPoint(area.X + area.Width - w - m, area.Y + area.Height - h - m);
+        // [Part 293] 보이기 전의 창은 기본 크기라 옮기면 옆 모니터에 걸려 배율이 바뀔 수 있다(Tools Part 291 실측) — Win32 로 최종 위치·물리 크기를 먼저
+        if (OperatingSystem.IsWindows() && TryGetPlatformHandle()?.Handle is IntPtr hwnd)
+            SetWindowPos(hwnd, IntPtr.Zero, position.X, position.Y, w, h, 0x0004 /* SWP_NOZORDER */ | 0x0010 /* SWP_NOACTIVATE */);
+        Position = position;
     }
 
     // ── 그리기 ───────────────────────────────────────────────
@@ -1155,4 +1164,7 @@ public sealed class PopoverWindow : Window
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
 }

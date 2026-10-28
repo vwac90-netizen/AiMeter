@@ -29,10 +29,30 @@ public sealed class App : Application
         RequestedThemeVariant = ThemeVariant.Dark;
         // [Part 249] 라디오·토글이 Windows 강조색(이 PC 는 분홍)을 따르던 것을 PC Up Check 하늘색으로 고정.
         // [Part 287] Avalonia Fluent 는 Application.Resources 의 SystemAccentColor* 를 보지 않는다(실측: 스위치가 기본 파랑) → 테마 팔레트로 준다
+        //   [Part 293] #0284C7 → #38BDF8 — WinUI 다크는 스위치를 Light2(#38BDF8)로 칠했고 Avalonia 는 강조색 그대로 칠한다(0.1.11 실측 대조)
         Styles.Add(new FluentTheme
         {
-            Palettes = { [ThemeVariant.Dark] = new ColorPaletteResources { Accent = Color.Parse("#0284C7") } },
+            Palettes = { [ThemeVariant.Dark] = new ColorPaletteResources { Accent = Color.Parse("#38BDF8") } },
         });
+        // [Part 293] WinUI 판과 같은 모양으로(0.1.11 설정 화면 픽셀 실측 · Tools Part 291 과 같은 값) —
+        //   켜진 손잡이 검정(Avalonia 기본 흰색) · 꺼진 스위치 바탕 검정 8%·테두리 흰 55%·손잡이 흰 77%(실측 #18202F·#91959D·#CACCCF)
+        //   · 콤보·버튼 흰 6% 채움 + 흰 9% 테두리(실측 #283040·#303847, Avalonia 기본 #141A24·#A1A3A7 · 버튼 #4E5563). 바탕을 직접 준 버튼은 영향 없음
+        var knobOn = new SolidColorBrush(Colors.Black);
+        var fill = new SolidColorBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF));
+        var edge = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+        var offFill = new SolidColorBrush(Color.FromArgb(0x14, 0x00, 0x00, 0x00));
+        var offStroke = new SolidColorBrush(Color.FromArgb(0x8B, 0xFF, 0xFF, 0xFF));
+        var offKnob = new SolidColorBrush(Color.FromArgb(0xC5, 0xFF, 0xFF, 0xFF));
+        foreach (var state in new[] { "", "PointerOver", "Pressed" })
+        {
+            Resources["ToggleSwitchKnobFillOn" + state] = knobOn;
+            Resources["ToggleSwitchFillOff" + state] = offFill;
+            Resources["ToggleSwitchStrokeOff" + state] = offStroke;
+            Resources["ToggleSwitchKnobFillOff" + state] = offKnob;
+        }
+        Resources["ComboBoxBackground"] = fill;
+        Resources["ComboBoxBorderBrush"] = edge;
+        Resources["ButtonBackground"] = fill;
     }
 
     public override void OnFrameworkInitializationCompleted()

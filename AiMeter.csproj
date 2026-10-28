@@ -13,7 +13,7 @@
     <AssemblyName>AiMeter</AssemblyName>
     <Product>AiMeter</Product>
     <Company>PC Up Check</Company>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
