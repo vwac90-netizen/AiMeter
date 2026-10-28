@@ -1,42 +1,43 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- [Part 246] AiMeter — AI 코딩 도구 사용 한도 트레이 앱.
-       WinUI 3 unpackaged + self-contained(런타임 설치 불필요). 산출물이 25MB 를 넘으므로
-       pcupcheck.com(Cloudflare Pages) 이 아니라 GitHub Releases 로 배포한다(사용자 결정, OPEN_ISSUES OI-2 와 같은 제약). -->
+       self-contained(런타임 설치 불필요). 산출물이 25MB 를 넘으므로
+       pcupcheck.com(Cloudflare Pages) 이 아니라 GitHub Releases 로 배포한다(사용자 결정, OPEN_ISSUES OI-2 와 같은 제약).
+       [Part 287] WinUI 3 → Avalonia 12 — 같은 화면을 맥에서도 그리기 위해(사용자 결정). 1a 는 Windows 만(동작 동일),
+       맥 TFM 은 1b 에서 추가한다. 작업 표시줄 스트립은 Win32·GDI+ 그대로라 System.Drawing.Common 을 쓴다.
+       WindowsAppSDK·H.NotifyIcon 과 .pri 복사(Part 250)는 WinUI 전용이라 뺐다. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>AiMeter</RootNamespace>
     <AssemblyName>AiMeter</AssemblyName>
     <Product>AiMeter</Product>
     <Company>PC Up Check</Company>
-    <Version>0.1.11</Version>
+    <Version>0.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Platforms>x64;ARM64</Platforms>
-    <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU'">x64</Platform>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$(Platform.ToLowerInvariant())</RuntimeIdentifier>
-    <UseWinUI>true</UseWinUI>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-
-    <WindowsPackageType>None</WindowsPackageType>
     <SelfContained>true</SelfContained>
-    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- [Part 287] Skia 네이티브 .pdb 가 100MB — 배포물에 넣지 않는다 -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.1.3" />
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
     <PackageReference Include="System.Management" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- [Part 250] unpackaged WinUI 의 dotnet publish 는 앱 리소스 색인(AiMeter.pri)을 빠뜨린다 → 없으면 XamlControlsResources 를
-       못 불러 시작하자마자 죽는다. 빌드 출력에서 publish 폴더로 복사한다. -->
-  <Target Name="CopyAppPriToPublish" AfterTargets="Publish" Condition="Exists('$(OutDir)$(AssemblyName).pri')">
-    <Copy SourceFiles="$(OutDir)$(AssemblyName).pri" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  <!-- [Part 287] Skia·HarfBuzz 네이티브 .pdb(합 100MB)는 NuGet 네이티브 파일로 따라와 DebugType=none 으로는 안 빠진다(실측) → publish 뒤에 지운다 -->
+  <Target Name="RemoveNativePdbFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedPdb Include="$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(PublishedPdb)" />
   </Target>
 
 </Project>

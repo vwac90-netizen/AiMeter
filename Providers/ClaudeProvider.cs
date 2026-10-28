@@ -12,7 +12,7 @@ namespace AiMeter.Providers;
 //   2026-10-07 실측: limits[] = { kind, group, percent, severity, resets_at, scope.model.display_name, is_active }.
 //   활성 한도인데도 is_active:false 로 오는 항목이 있었다 → is_active 로 거르지 않는다.
 // - 짧은 시간에 여러 번 부르면 429 로 막힌다는 보고가 있어(직접 재현은 안 함) 백그라운드 호출은 5분에 1회로 묶는다.
-public sealed class ClaudeProvider : IUsageProvider
+public sealed partial class ClaudeProvider : IUsageProvider
 {
     private static readonly Uri Endpoint = new("https://api.anthropic.com/api/oauth/usage");
     private static readonly TimeSpan BackgroundInterval = TimeSpan.FromMinutes(5);
@@ -33,7 +33,7 @@ public sealed class ClaudeProvider : IUsageProvider
     {
         LoadCache();
         http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("AiMeter/0.1.9");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("AiMeter/0.2.0");
     }
 
     public string Name => "Claude Code";
@@ -254,6 +254,10 @@ public sealed class ClaudeProvider : IUsageProvider
 
     private sealed record CacheFile(UsageSnapshot? LastGood, DateTimeOffset LastAttempt, DateTimeOffset CooldownUntil, int Failures);
 
+    // [Part 287] 소스 생성 직렬화 — 트리밍한 배포판에서 리플렉션 JsonSerializer 는 예외를 낸다(스파이크 확인). 파일 모양은 종전과 같다
+    [System.Text.Json.Serialization.JsonSerializable(typeof(CacheFile))]
+    private sealed partial class CacheJson : System.Text.Json.Serialization.JsonSerializerContext;
+
     private static readonly string CachePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AiMeter", "claude-cache.json");
 
     private void LoadCache()
@@ -261,7 +265,7 @@ public sealed class ClaudeProvider : IUsageProvider
         try
         {
             if (!File.Exists(CachePath)) return;
-            var c = JsonSerializer.Deserialize<CacheFile>(File.ReadAllText(CachePath));
+            var c = JsonSerializer.Deserialize(File.ReadAllText(CachePath), CacheJson.Default.CacheFile);
             if (c is null) return;
             // [Part 266] 캐시의 라벨은 저장할 때의 언어다 — 언어를 바꾼 직후 「5시간」 이 영어 화면에 남았다. 키로 다시 만든다
             lastGood = c.LastGood is { } g ? g with { Windows = g.Windows.Select(w => w with { Label = LabelFor(w.Key) }).ToList() } : null;
@@ -289,7 +293,7 @@ public sealed class ClaudeProvider : IUsageProvider
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(CachePath)!);
-            File.WriteAllText(CachePath, JsonSerializer.Serialize(new CacheFile(lastGood, lastAttempt, cooldownUntil, failures)));
+            File.WriteAllText(CachePath, JsonSerializer.Serialize(new CacheFile(lastGood, lastAttempt, cooldownUntil, failures), CacheJson.Default.CacheFile));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {

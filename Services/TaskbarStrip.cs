@@ -4,7 +4,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using AiMeter.Models;
-using Microsoft.UI.Dispatching;
+using Avalonia.Threading;
 using Microsoft.Win32;
 
 namespace AiMeter.Services;
@@ -21,8 +21,8 @@ public sealed class TaskbarStrip : IDisposable
     private static TaskbarStrip? instance;       // 창 프로시저(정적 대리자)가 찾아갈 대상 — 스트립은 하나뿐
     private static WndProc? procKeepAlive;       // 대리자가 GC 되면 창 프로시저 호출이 죽는다
 
-    private readonly DispatcherQueueTimer timer;
-    private readonly DispatcherQueue dispatcher;
+    // [Part 287] WinUI DispatcherQueue → Avalonia 디스패처. 창 프로시저는 Avalonia 메시지 루프가 같은 스레드에서 돌려 준다(스파이크 확인)
+    private readonly DispatcherTimer timer;
     private int? appsRight;   // [Part 255] 작업 표시줄 앱 버튼 오른쪽 끝(화면 픽셀) — 모르면 null(제한 없음)
     private int appsTick;
     private bool appsBusy;
@@ -36,12 +36,10 @@ public sealed class TaskbarStrip : IDisposable
 
     public event Action? Click;
 
-    public TaskbarStrip(DispatcherQueue dispatcher)
+    public TaskbarStrip()
     {
         instance = this;
-        this.dispatcher = dispatcher;
-        timer = dispatcher.CreateTimer();
-        timer.Interval = TimeSpan.FromSeconds(2);
+        timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         timer.Tick += (_, _) => Tick();
     }
 
@@ -74,7 +72,7 @@ public sealed class TaskbarStrip : IDisposable
         if (appsBusy || taskbar == IntPtr.Zero) return;
         appsBusy = true;
         var tb = taskbar;
-        Task.Run(() => TaskbarApps.RightEdge(tb)).ContinueWith(t => dispatcher.TryEnqueue(() =>
+        Task.Run(() => TaskbarApps.RightEdge(tb)).ContinueWith(t => Dispatcher.UIThread.Post(() =>
         {
             appsBusy = false;
             int? edge = t.Status == TaskStatus.RanToCompletion ? t.Result : null;

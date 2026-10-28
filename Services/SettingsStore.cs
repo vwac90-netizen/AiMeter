@@ -68,7 +68,7 @@ public sealed class SettingsStore
         {
             if (File.Exists(FilePath))
             {
-                var loaded = JsonSerializer.Deserialize<SettingsStore>(File.ReadAllText(FilePath));
+                var loaded = JsonSerializer.Deserialize(File.ReadAllText(FilePath), SettingsJson.Default.SettingsStore);
                 if (loaded is not null)
                 {
                     if (loaded.View is not (ViewGauge or ViewBattery or ViewSpend)) loaded.View = ViewGauge;
@@ -95,7 +95,7 @@ public sealed class SettingsStore
         try
         {
             Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, SettingsJson.Default.SettingsStore));
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -104,3 +104,8 @@ public sealed class SettingsStore
         }
     }
 }
+
+// [Part 287] 소스 생성 직렬화 — 트리밍한 배포판에서 리플렉션 JsonSerializer 는 예외를 낸다. 파일 모양(들여쓰기 포함)은 종전과 같다
+[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = true)]
+[System.Text.Json.Serialization.JsonSerializable(typeof(SettingsStore))]
+internal sealed partial class SettingsJson : System.Text.Json.Serialization.JsonSerializerContext;

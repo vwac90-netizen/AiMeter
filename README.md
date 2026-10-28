@@ -50,7 +50,7 @@ Claude Code · Codex · Cursor · Antigravity 의 사용 한도가 **얼마나 �
 
 ## 시작하기
 
-1. [Releases](https://github.com/vwac90-netizen/AiMeter/releases/latest) 에서 `AiMeter-<버전>-win-x64.zip` 을 받습니다(약 84MB).
+1. [Releases](https://github.com/vwac90-netizen/AiMeter/releases/latest) 에서 `AiMeter-<버전>-win-x64.zip` 을 받습니다(약 45MB).
 2. 원하는 폴더(예: `%LOCALAPPDATA%\Programs\AiMeter`)에 압축을 풀고 `AiMeter.exe` 를 실행합니다. 설치 과정은 없습니다.
 3. 트레이(^)에 링 아이콘이, 작업 표시줄 시계 옆에 사용량 줄이 생깁니다. **누르면 팝오버가 열려요.**
 4. 로그인이 필요한 도구는 팝오버의 톱니바퀴 → **「로그인」** 버튼을 누르면 그 도구의 공식 로그인 창이 열립니다. 마치고 새로고침(⟳)을 누르세요.
@@ -65,7 +65,7 @@ AiMeter 에는 따로 큰 창이 없습니다. 끄려면 트레이 아이콘을 
 - 그 밖의 PC 에서는 「Windows의 PC 보호」 파란 창이 뜰 수 있어요 → **「추가 정보」 → 「실행」**.
 - 받은 파일이 맞는지는 릴리스 노트의 **SHA-256** 과 비교해 확인할 수 있습니다.
   ```powershell
-  Get-FileHash .\AiMeter-0.1.11-win-x64.zip -Algorithm SHA256
+  Get-FileHash .\AiMeter-0.2.0-win-x64.zip -Algorithm SHA256
   ```
 
 ## 로그인 정보와 데이터
@@ -106,7 +106,7 @@ dotnet publish -c Release -r win-x64 -o out
 .\out\AiMeter.exe
 ```
 
-스택: .NET 10 · WinUI 3 (Windows App SDK, unpackaged · self-contained) · H.NotifyIcon.WinUI · System.Management.
+스택: .NET 10 · Avalonia 12 (self-contained) · System.Management · System.Drawing.Common(작업 표시줄 줄).
 코드 주석의 `[Part N]` 은 원 개발 기록(PC Up Check 저장소)의 항목 번호입니다.
 
 ## 디자인 이야기

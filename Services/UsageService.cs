@@ -1,6 +1,6 @@
 using AiMeter.Models;
 using AiMeter.Providers;
-using Microsoft.UI.Dispatching;
+using Avalonia.Threading;
 
 namespace AiMeter.Services;
 
@@ -9,15 +9,14 @@ public sealed class UsageService
 {
     private readonly IUsageProvider[] providers;
     private readonly SettingsStore settings;
-    private readonly DispatcherQueueTimer timer;
+    private readonly DispatcherTimer timer; // [Part 287] WinUI DispatcherQueueTimer → Avalonia(UI 스레드에서 울린다)
     private bool busy;
 
-    public UsageService(IUsageProvider[] providers, SettingsStore settings, DispatcherQueue dispatcher)
+    public UsageService(IUsageProvider[] providers, SettingsStore settings)
     {
         this.providers = providers;
         this.settings = settings;
-        timer = dispatcher.CreateTimer();
-        timer.Interval = TimeSpan.FromMinutes(1);
+        timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         timer.Tick += async (_, _) => await RefreshAsync(false);
     }
 

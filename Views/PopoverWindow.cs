@@ -2,51 +2,58 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using AiMeter.Models;
 using AiMeter.Services;
-using Microsoft.UI;
-using Microsoft.UI.Text;
-using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
-using Windows.Foundation;
-using Windows.Graphics;
-using Windows.System;
-using WinRT.Interop;
-using Path = Microsoft.UI.Xaml.Shapes.Path;
+using Avalonia;
+using Avalonia.Automation;
+using Avalonia.Collections;
+using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Shapes;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Styling;
+using Avalonia.Threading;
+using Path = Avalonia.Controls.Shapes.Path;
 
 namespace AiMeter.Views;
 
 // [Part 246] 트레이를 누르면 오른쪽 아래에 뜨는 팝오버.
 // 시안(.omc/specs/agentgauge-integrated.html) 결정: B 계기판 · C 배터리 중 「하나만」 보이고 탭이 없다. 설정에서 고른다.
 // D 트리맵(로컬 세션 로그 필요)과 A 작업 표시줄 스트립은 2차 범위 — 미리 자리만 만들지 않는다(죽은 UI 금지).
+// [Part 287] WinUI 3 → Avalonia 12. 화면 구성·문구·가드는 그대로이고 컨트롤만 바꿨다(시안 assets/html/avalonia-mockup.html).
 public sealed class PopoverWindow : Window
 {
     private const double PopWidth = 380;
 
-    private static readonly Windows.UI.Color Text1 = Hex("#F8FAFC");
-    private static readonly Windows.UI.Color Text2 = Hex("#94A3B8");
-    private static readonly Windows.UI.Color Track = Windows.UI.Color.FromArgb(0x29, 0x94, 0xA3, 0xB8);
-    private static readonly Windows.UI.Color Line = Windows.UI.Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF);
-    private static readonly Windows.UI.Color Surface = Hex("#1E293B");
-    private static readonly Windows.UI.Color Accent = Hex("#38BDF8");
-    private static readonly Windows.UI.Color Lime = Hex("#84CC16");
-    private static readonly Windows.UI.Color Sky = Hex("#38BDF8");
-    private static readonly Windows.UI.Color Orange = Hex("#FB923C");
-    private static readonly Windows.UI.Color Red = Hex("#F87171");
+    private static readonly Color Text1 = Hex("#F8FAFC");
+    private static readonly Color Text2 = Hex("#94A3B8");
+    private static readonly Color Track = Color.FromArgb(0x29, 0x94, 0xA3, 0xB8);
+    private static readonly Color Line = Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF);
+    private static readonly Color Surface = Hex("#1E293B");
+    private static readonly Color Accent = Hex("#38BDF8");
+    private static readonly Color Lime = Hex("#84CC16");
+    private static readonly Color Sky = Hex("#38BDF8");
+    private static readonly Color Orange = Hex("#FB923C");
+    private static readonly Color Red = Hex("#F87171");
+
+    // [Part 287] WinUI CharacterSpacing(1/1000 em) → Avalonia LetterSpacing(픽셀). 11px 글자 기준으로 환산했다
+    private const double Spacing80 = 11 * 0.080;
+    private const double Spacing60 = 11 * 0.060;
 
     private readonly UsageService usage;
     private readonly SettingsStore settings;
     private readonly ClaudeLogScanner scanner;
     private readonly Grid root;
     private readonly StackPanel body;
+    private readonly Border scrollContent;
+    private readonly Border footerBorder;
     private readonly TextBlock updatedText;
     private readonly Button settingsButton;
     private bool showingSettings;
     private bool isVisible;
+    private bool exiting;
     private DateTimeOffset lastHidden = DateTimeOffset.MinValue;
-    private SubclassProc? subclassProc; // 창이 사는 동안 GC 되지 않게 붙잡아 둔다
 
     /// <summary>[Part 248] 설정에서 작업 표시줄 스트립을 켜거나 껐다 — App 이 스트립을 붙이거나 뗀다.</summary>
     public event Action? TaskbarStripChanged;
@@ -66,8 +73,14 @@ public sealed class PopoverWindow : Window
         this.settings = settings;
         this.scanner = scanner;
 
-        body = new StackPanel { Spacing = 10, Padding = new Thickness(14, 14, 14, 12) };
-        var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        body = new StackPanel { Spacing = 10 };
+        scrollContent = new Border { Padding = new Thickness(14, 14, 14, 12), Child = body };
+        var scroll = new ScrollViewer
+        {
+            Content = scrollContent,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
 
         updatedText = new TextBlock { FontSize = 11, Foreground = Brush(Text2), VerticalAlignment = VerticalAlignment.Center };
         var refreshButton = IconButton("", S.T("새로고침", "Refresh"));
@@ -77,9 +90,6 @@ public sealed class PopoverWindow : Window
 
         var footer = new Grid
         {
-            Padding = new Thickness(14, 6, 8, 6),
-            BorderBrush = Brush(Line),
-            BorderThickness = new Thickness(0, 1, 0, 0),
             ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto }, new ColumnDefinition { Width = GridLength.Auto } },
         };
         footer.Children.Add(updatedText);
@@ -87,58 +97,70 @@ public sealed class PopoverWindow : Window
         Grid.SetColumn(settingsButton, 2);
         footer.Children.Add(refreshButton);
         footer.Children.Add(settingsButton);
+        footerBorder = new Border
+        {
+            Padding = new Thickness(14, 6, 8, 6),
+            BorderBrush = Brush(Line),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Child = footer,
+        };
 
         root = new Grid
         {
             Width = PopWidth,
-            RequestedTheme = ElementTheme.Dark,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xE6, 0x0F, 0x17, 0x2A)),
+            Background = new SolidColorBrush(Color.FromArgb(0xE6, 0x0F, 0x17, 0x2A)),
             RowDefinitions = { new RowDefinition(), new RowDefinition { Height = GridLength.Auto } },
         };
         root.Children.Add(scroll);
-        Grid.SetRow(footer, 1);
-        root.Children.Add(footer);
-
-        var esc = new KeyboardAccelerator { Key = VirtualKey.Escape };
-        esc.Invoked += (_, e) => { e.Handled = true; HideNow(); };
-        root.KeyboardAccelerators.Add(esc);
-        root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden; // [Part 249] 「Esc」 안내 툴팁이 팝오버 위에 떠 있던 것
+        Grid.SetRow(footerBorder, 1);
+        root.Children.Add(footerBorder);
 
         Content = root;
         Title = "AiMeter";
-        SystemBackdrop = new DesktopAcrylicBackdrop();
+        Width = PopWidth;
+        RequestedThemeVariant = ThemeVariant.Dark;
+        Background = Brushes.Transparent;
+        TransparencyLevelHint = new[] { WindowTransparencyLevel.AcrylicBlur, WindowTransparencyLevel.Blur };
+        WindowDecorations = WindowDecorations.None;
+        CanResize = false;
+        ShowInTaskbar = false;
+        Topmost = true;
+        WindowStartupLocation = WindowStartupLocation.Manual;
 
-        var presenter = OverlappedPresenter.Create();
-        presenter.IsResizable = false;
-        presenter.IsMaximizable = false;
-        presenter.IsMinimizable = false;
-        presenter.IsAlwaysOnTop = true;
-        presenter.SetBorderAndTitleBar(false, false);
-        AppWindow.SetPresenter(presenter);
-        AppWindow.IsShownInSwitchers = false;
-        AppWindow.Closing += (_, e) => { e.Cancel = true; HideNow(); };
-
-        var hwnd = WindowNative.GetWindowHandle(this);
-        int round = 2; // DWMWCP_ROUND
-        DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref round, sizeof(int));
-        // 둥근 모서리는 유지하고 DWM 이 덧그리는 얇은 테두리만 없앤다
-        int noBorder = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
-        DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, ref noBorder, sizeof(int));
-
-        // 크기 조절을 끈 창에도 Windows 가 얇은 대화상자 프레임(WS_DLGFRAME)을 되살려 흰 띠가 남는다.
-        // WM_NCCALCSIZE 에서 창 전체를 내용 영역으로 돌려주면 프레임이 사라지고, 둥근 모서리·그림자는 DWM 이 그대로 그린다.
-        subclassProc = (h, msg, wParam, lParam, id, data) =>
-            msg == 0x0083 /* WM_NCCALCSIZE */ && wParam != IntPtr.Zero ? IntPtr.Zero : DefSubclassProc(h, msg, wParam, lParam);
-        SetWindowSubclass(hwnd, subclassProc, 1, IntPtr.Zero);
-        Closed += (_, _) => RemoveWindowSubclass(hwnd, subclassProc, 1);
-
-        // 바깥을 누르면 닫힌다(라이트 디스미스)
-        Activated += (_, e) =>
+        KeyDown += (_, e) =>
         {
-            if (e.WindowActivationState == WindowActivationState.Deactivated) HideNow();
+            if (e.Key != Key.Escape) return;
+            e.Handled = true;
+            HideNow();
         };
+        Closing += (_, e) =>
+        {
+            if (exiting) return;
+            e.Cancel = true;
+            HideNow();
+        };
+        // 바깥을 누르면 닫힌다(라이트 디스미스)
+        Deactivated += (_, _) => HideNow();
+        Opened += (_, _) => RoundCorners();
 
         Render();
+    }
+
+    /// <summary>[Part 287] 앱을 끝낼 때만 진짜로 닫는다(평소 닫기 요청은 숨김).</summary>
+    public void CloseForExit()
+    {
+        exiting = true;
+        Close();
+    }
+
+    /// <summary>Windows 11 둥근 모서리 — 테두리 없는 창은 기본이 각진 모서리다. DWM 이 덧그리는 얇은 테두리는 없앤다(Part 246 과 같은 값).</summary>
+    private void RoundCorners()
+    {
+        if (!OperatingSystem.IsWindows() || TryGetPlatformHandle()?.Handle is not IntPtr hwnd) return;
+        int round = 2; // DWMWCP_ROUND
+        DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref round, sizeof(int));
+        int noBorder = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
+        DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, ref noBorder, sizeof(int));
     }
 
     // ── 열기/닫기 ─────────────────────────────────────────────
@@ -151,7 +173,7 @@ public sealed class PopoverWindow : Window
         showingSettings = false;
         Render();
         Place();
-        AppWindow.Show();
+        Show();
         Activate();
         isVisible = true;
         _ = usage.RefreshAsync(false);
@@ -163,25 +185,30 @@ public sealed class PopoverWindow : Window
         if (!isVisible) return;
         isVisible = false;
         lastHidden = DateTimeOffset.UtcNow;
-        AppWindow.Hide();
+        Hide();
     }
 
     /// <summary>작업 영역(작업 표시줄 제외) 오른쪽 아래에 내용 높이만큼.</summary>
     private void Place()
     {
-        var hwnd = WindowNative.GetWindowHandle(this);
-        double scale = GetDpiForWindow(hwnd) / 96.0;
-        var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen is null) return;
+        double scale = screen.Scaling;
+        var area = screen.WorkingArea; // 물리 픽셀
         double margin = 12;
         double maxHeight = area.Height / scale - margin * 2;
 
-        root.Measure(new Size(PopWidth, double.PositiveInfinity));
-        double height = Math.Min(Math.Ceiling(root.DesiredSize.Height), maxHeight);
+        // [Part 287] WinUI 처럼 root.Measure 로 재면 안 된다 — Avalonia 는 root 가 유효하면 저장값을 돌려줘 바뀐 본문을 못 잰다
+        //   (실측: 본문 9줄인데 66.5×15 · 팝오버가 머리글만 보이게 잘림). 배치를 한 번 돌리고 스크롤 안 내용 높이 + 아래 줄 높이를 쓴다.
+        //   스크롤 뷰어는 내용에 무한 높이를 주므로 창 높이와 무관하게 본문 전체 높이가 나온다.
+        UpdateLayout();
+        double height = Math.Min(Math.Ceiling(scrollContent.DesiredSize.Height + footerBorder.DesiredSize.Height), maxHeight);
+        Height = height;
 
         int w = (int)Math.Round(PopWidth * scale);
         int h = (int)Math.Round(height * scale);
         int m = (int)Math.Round(margin * scale);
-        AppWindow.MoveAndResize(new RectInt32(area.X + area.Width - w - m, area.Y + area.Height - h - m, w, h));
+        Position = new PixelPoint(area.X + area.Width - w - m, area.Y + area.Height - h - m);
     }
 
     // ── 그리기 ───────────────────────────────────────────────
@@ -218,10 +245,10 @@ public sealed class PopoverWindow : Window
         var captured = snapshots.Where(s => s.CapturedAt is not null).Select(s => s.CapturedAt!.Value).DefaultIfEmpty().Max();
         updatedText.Text = captured == default ? S.T("아직 받은 값 없음", "No data yet") : Ago(captured);
         string settingsName = showingSettings ? S.T("돌아가기", "Back") : S.T("설정", "Settings");
-        ToolTipService.SetToolTip(settingsButton, settingsName);
+        ToolTip.SetTip(settingsButton, settingsName);
         // [Part 253] 접근성 이름도 함께 — 툴팁만 바뀌고 이름은 처음 값(설정)에 머물러 화면 읽기·UIA 가 「돌아가기」 를 못 찾았다
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(settingsButton, settingsName);
-        ((FontIcon)settingsButton.Content).Glyph = showingSettings ? "" : "";
+        AutomationProperties.SetName(settingsButton, settingsName);
+        ((TextBlock)settingsButton.Content!).Text = showingSettings ? "" : "";
 
         if (isVisible) Place();
     }
@@ -308,13 +335,13 @@ public sealed class PopoverWindow : Window
     {
         var saveFailed = Notice(S.T("설정을 저장하지 못했습니다. 다음 실행 때는 기본값으로 돌아갑니다.",
             "Couldn't save the setting. It will reset next launch."), Orange);
-        saveFailed.Visibility = Visibility.Collapsed;
-        void Save() => saveFailed.Visibility = settings.Save() ? Visibility.Collapsed : Visibility.Visible;
+        saveFailed.IsVisible = false;
+        void Save() => saveFailed.IsVisible = !settings.Save();
 
         // ── 계정 · 표시 ──
         // [Part 249] 로그인은 공식 CLI·앱이 한다. AiMeter 는 상태를 보여 주고 로그인 창을 띄울 뿐이다.
         body.Children.Add(Label(S.T("계정 · 표시 (끄면 팝오버·작업 표시줄·트레이에서 숨김)", "Accounts · Visibility (off hides it everywhere)")));
-        var accounts = new List<FrameworkElement>();
+        var accounts = new List<Control>();
         foreach (var snap in usage.All)
         {
             string tool = snap.Tool;
@@ -334,19 +361,25 @@ public sealed class PopoverWindow : Window
                 ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto }, new ColumnDefinition { Width = GridLength.Auto } },
             };
             // 이름과 상태를 한 줄에 — 「Claude Code  Max 5x」
-            var line = new TextBlock { FontSize = 13, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            var name = new Microsoft.UI.Xaml.Documents.Run { Text = tool, FontWeight = FontWeights.SemiBold, Foreground = Brush(Text1) };
-            line.Inlines.Add(name);
-            line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            var name = new Run { Text = tool, FontWeight = FontWeight.SemiBold, Foreground = Brush(Text1) };
+            var line = new TextBlock
             {
-                Text = "  " + state, FontSize = 11,
-                Foreground = Brush(snap.State is SnapshotState.Ok or SnapshotState.NotInstalled ? Text2 : Orange),
-            });
-            if (snap.State is not (SnapshotState.Ok or SnapshotState.NotInstalled) && snap.Message is not null) ToolTipService.SetToolTip(line, snap.Message);
+                FontSize = 13, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
+                Inlines = new InlineCollection
+                {
+                    name,
+                    new Run
+                    {
+                        Text = "  " + state, FontSize = 11,
+                        Foreground = Brush(snap.State is SnapshotState.Ok or SnapshotState.NotInstalled ? Text2 : Orange),
+                    },
+                },
+            };
+            if (snap.State is not (SnapshotState.Ok or SnapshotState.NotInstalled) && snap.Message is not null) ToolTip.SetTip(line, snap.Message);
             row.Children.Add(line);
 
             var failed = Notice(S.T($"{tool} 를 실행하지 못했습니다. 설치돼 있는지 확인하세요.", $"Couldn't start {tool}. Check that it is installed."), Orange);
-            failed.Visibility = Visibility.Collapsed;
+            failed.IsVisible = false;
             if (installed)
             {
                 // Claude·Codex 는 CLI 로그인 명령, Cursor·Antigravity 는 앱을 연다(로그인은 그 앱에서)
@@ -356,11 +389,12 @@ public sealed class PopoverWindow : Window
                     FontSize = 12,
                     Width = 72,
                     Padding = new Thickness(0, 3, 0, 4),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(login, S.T($"{tool} 로그인 창 열기", $"Open {tool} sign-in"));
-                ToolTipService.SetToolTip(login, S.T("로그인을 마치면 새로고침(⟳)을 누르세요. AiMeter 는 로그인 정보를 읽기만 합니다.", "After signing in, press refresh (⟳). AiMeter only reads credentials."));
-                login.Click += (_, _) => failed.Visibility = LoginLauncher.Start(tool) ? Visibility.Collapsed : Visibility.Visible;
+                AutomationProperties.SetName(login, S.T($"{tool} 로그인 창 열기", $"Open {tool} sign-in"));
+                ToolTip.SetTip(login, S.T("로그인을 마치면 새로고침(⟳)을 누르세요. AiMeter 는 로그인 정보를 읽기만 합니다.", "After signing in, press refresh (⟳). AiMeter only reads credentials."));
+                login.Click += (_, _) => failed.IsVisible = !LoginLauncher.Start(tool);
                 Grid.SetColumn(login, 1);
                 row.Children.Add(login);
 
@@ -392,7 +426,7 @@ public sealed class PopoverWindow : Window
         string[] dates = { SettingsStore.DateShort, SettingsStore.DateLong };
         string[] bases = { SettingsStore.BasisRemaining, SettingsStore.BasisUsed };
         string[] langs = { SettingsStore.LangAuto, SettingsStore.LangKo, SettingsStore.LangEn };
-        body.Children.Add(Card(new List<FrameworkElement>
+        body.Children.Add(Card(new List<Control>
         {
             // [Part 266] 언어 — 이름은 두 언어를 함께 적어 지금 언어를 못 읽어도 찾을 수 있게. 바꾸면 앱이 다시 시작된다
             ComboRow(S.T("언어 · Language", "Language · 언어"),
@@ -443,8 +477,8 @@ public sealed class PopoverWindow : Window
         // ── 작업 표시줄 · 기타 ──
         body.Children.Add(Label(S.T("작업 표시줄 · 기타", "Taskbar · Other")));
         var startupFailed = Notice(S.T("시작 프로그램 등록을 바꾸지 못했습니다.", "Couldn't change the startup setting."), Orange);
-        startupFailed.Visibility = Visibility.Collapsed;
-        body.Children.Add(Card(new List<FrameworkElement>
+        startupFailed.IsVisible = false;
+        body.Children.Add(Card(new List<Control>
         {
             SwitchRow(S.T("작업 표시줄 사용량 줄", "Taskbar usage strip"),
                 S.T("C·X·A·Cu = Claude·Codex·Antigravity·Cursor", "C·X·A·Cu = Claude·Codex·Antigravity·Cursor"),
@@ -459,7 +493,7 @@ public sealed class PopoverWindow : Window
                 StartupService.IsEnabled(), on =>
                 {
                     if (on == StartupService.IsEnabled()) return;
-                    startupFailed.Visibility = StartupService.Set(on) ? Visibility.Collapsed : Visibility.Visible;
+                    startupFailed.IsVisible = !StartupService.Set(on);
                 }),
             SwitchRow(S.T("트리맵용 Claude Code 기록 읽기", "Read Claude Code logs for treemap"), LogsShortText(),
                 settings.ReadLocalLogs, on =>
@@ -478,14 +512,14 @@ public sealed class PopoverWindow : Window
     private static string LogsShortText() => S.T("토큰 수만 셉니다. 대화 내용은 저장·전송하지 않습니다.", "Counts tokens only. Conversation content is never stored or sent.");
 
     /// <summary>[Part 254] 「이름 ··· [콤보]」 한 줄. 처리기는 사용자가 고른 경우에만 — 로드 때 오는 이벤트는 값이 같아 무시된다(Part 247).</summary>
-    private static FrameworkElement ComboRow(string text, string[] items, int selected, Action<int> changed)
+    private static Control ComboRow(string text, string[] items, int selected, Action<int> changed)
     {
         var grid = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } } };
         grid.Children.Add(new TextBlock { Text = text, FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush(Text1) });
         var combo = new ComboBox { FontSize = 12, MinWidth = 0, Width = 196, VerticalAlignment = VerticalAlignment.Center };
         foreach (var item in items) combo.Items.Add(item);
         combo.SelectedIndex = Math.Max(0, selected);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(combo, text);
+        AutomationProperties.SetName(combo, text);
         combo.SelectionChanged += (_, _) => { if (combo.SelectedIndex >= 0) changed(combo.SelectedIndex); };
         Grid.SetColumn(combo, 1);
         grid.Children.Add(combo);
@@ -493,7 +527,7 @@ public sealed class PopoverWindow : Window
     }
 
     /// <summary>[Part 253] 설정 구역 카드 — 둥근 면 안에 항목을 얇은 줄로 나눈다.</summary>
-    private static FrameworkElement Card(IReadOnlyList<FrameworkElement> items)
+    private static Control Card(IReadOnlyList<Control> items)
     {
         var stack = new StackPanel();
         for (int i = 0; i < items.Count; i++)
@@ -506,18 +540,18 @@ public sealed class PopoverWindow : Window
             Child = stack,
             Padding = new Thickness(12, 8, 12, 8),
             CornerRadius = new CornerRadius(8),
-            Background = Brush(Windows.UI.Color.FromArgb(0x99, Surface.R, Surface.G, Surface.B)),
+            Background = Brush(Color.FromArgb(0x99, Surface.R, Surface.G, Surface.B)),
             BorderBrush = Brush(Line),
             BorderThickness = new Thickness(1),
         };
     }
 
-    private static FrameworkElement SwitchRow(string text, string? description, bool isOn, Action<bool> changed)
+    private static Control SwitchRow(string text, string? description, bool isOn, Action<bool> changed)
     {
         var grid = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } } };
         var texts = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
-        texts.Children.Add(new TextBlock { Text = text, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Brush(Text1) });
-        if (description is not null) texts.Children.Add(new TextBlock { Text = description, FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brush(Text2), LineHeight = 16 });
+        texts.Children.Add(new KeepTextBlock(text) { FontSize = 13, Foreground = Brush(Text1) });
+        if (description is not null) texts.Children.Add(new KeepTextBlock(description) { FontSize = 11, Foreground = Brush(Text2), LineHeight = 16 });
         grid.Children.Add(texts);
         var toggle = Switch(isOn, text, changed);
         Grid.SetColumn(toggle, 1);
@@ -527,10 +561,10 @@ public sealed class PopoverWindow : Window
 
     private static ToggleSwitch Switch(bool isOn, string name, Action<bool> changed)
     {
-        // 글자 없는 스위치 — ToggleSwitch 는 오른쪽에 글자 자리를 남기므로 음수 여백으로 당긴다
-        var toggle = new ToggleSwitch { IsOn = isOn, OnContent = "", OffContent = "", MinWidth = 0, Margin = new Thickness(8, 0, -12, 0), VerticalAlignment = VerticalAlignment.Center };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, name);
-        toggle.Toggled += (_, _) => changed(toggle.IsOn);
+        // 글자 없는 스위치 — 켜짐/꺼짐 글자 자리를 비운다
+        var toggle = new ToggleSwitch { IsChecked = isOn, OnContent = null, OffContent = null, MinWidth = 0, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(toggle, name);
+        toggle.IsCheckedChanged += (_, _) => changed(toggle.IsChecked == true);
         return toggle;
     }
 
@@ -544,7 +578,7 @@ public sealed class PopoverWindow : Window
     {
         if (!settings.ReadLocalLogs) return;
         if (!force && scanner.Last is { } last && DateTimeOffset.UtcNow - last.ScannedAt < TimeSpan.FromMinutes(5)) return;
-        scanner.ScanAsync().ContinueWith(_ => DispatcherQueue.TryEnqueue(() =>
+        scanner.ScanAsync().ContinueWith(_ => Dispatcher.UIThread.Post(() =>
         {
             if (isVisible && !showingSettings && settings.View == SettingsStore.ViewSpend) Render();
         }));
@@ -590,7 +624,7 @@ public sealed class PopoverWindow : Window
                 Content = text,
                 FontSize = 12,
                 Padding = new Thickness(12, 4, 12, 4),
-                Background = Brush(selected ? Windows.UI.Color.FromArgb(0x33, Accent.R, Accent.G, Accent.B) : Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+                Background = Brush(selected ? Color.FromArgb(0x33, Accent.R, Accent.G, Accent.B) : Color.FromArgb(0, 0, 0, 0)),
                 BorderBrush = Brush(selected ? Accent : Line),
                 BorderThickness = new Thickness(1),
             };
@@ -670,7 +704,7 @@ public sealed class PopoverWindow : Window
             : S.T($"지금은 Claude Code 만 집계합니다 · {Span(age)} 전 집계", $"Only Claude Code is counted for now · counted {Span(age)} ago")));
     }
 
-    private sealed record TileItem(string Title, string? Sub, long Tokens, Windows.UI.Color Color, double? Remaining);
+    private sealed record TileItem(string Title, string? Sub, long Tokens, Color Color, double? Remaining);
 
     private static double? Tightest(IEnumerable<UsageWindow> windows)
     {
@@ -679,16 +713,16 @@ public sealed class PopoverWindow : Window
     }
 
     /// <summary>기준색에서 순위가 낮을수록 흰색 쪽으로 옅게.</summary>
-    private static Windows.UI.Color Shade(Windows.UI.Color c, int index, int count)
+    private static Color Shade(Color c, int index, int count)
     {
         if (count <= 1) return c;
         double t = 0.45 * index / (count - 1);
         byte Mix(byte v) => (byte)Math.Round(v + (255 - v) * t);
-        return Windows.UI.Color.FromArgb(0xFF, Mix(c.R), Mix(c.G), Mix(c.B));
+        return Color.FromArgb(0xFF, Mix(c.R), Mix(c.G), Mix(c.B));
     }
 
     /// <param name="total">비중의 분모(그리지 않는 「그 밖」 조각까지 포함한 전체)</param>
-    private static FrameworkElement Treemap(List<TileItem> tiles, long total)
+    private static Control Treemap(List<TileItem> tiles, long total)
     {
         var sorted = tiles.OrderByDescending(t => t.Tokens).ToList();
         long drawn = sorted.Sum(t => t.Tokens);
@@ -719,23 +753,23 @@ public sealed class PopoverWindow : Window
         return panel;
     }
 
-    private static FrameworkElement Tile(TileItem item, long total)
+    private static Control Tile(TileItem item, long total)
     {
         double share = item.Tokens * 100.0 / total;
         var content = new Grid { RowDefinitions = { new RowDefinition { Height = GridLength.Auto }, new RowDefinition(), new RowDefinition { Height = GridLength.Auto } } };
-        var head = new StackPanel { Padding = new Thickness(10, 8, 10, 0) };
-        head.Children.Add(new TextBlock { Text = item.Title, FontSize = 13, FontWeight = FontWeights.Bold, Foreground = Brush(Colors.White), TextTrimming = TextTrimming.CharacterEllipsis });
-        if (item.Sub is not null) head.Children.Add(new TextBlock { Text = item.Sub.ToUpper(CultureInfo.InvariantCulture), FontSize = 11, CharacterSpacing = 60, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(Windows.UI.Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)) });
+        var head = new StackPanel { Margin = new Thickness(10, 8, 10, 0) };
+        head.Children.Add(new TextBlock { Text = item.Title, FontSize = 13, FontWeight = FontWeight.Bold, Foreground = Brush(Colors.White), TextTrimming = TextTrimming.CharacterEllipsis });
+        if (item.Sub is not null) head.Children.Add(new TextBlock { Text = item.Sub.ToUpper(CultureInfo.InvariantCulture), FontSize = 11, LetterSpacing = Spacing60, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Brush(Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)) });
         content.Children.Add(head);
 
-        var value = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new Thickness(10, 0, 10, 6), VerticalAlignment = VerticalAlignment.Bottom };
-        value.Children.Add(new TextBlock { Text = share < 1 ? "<1%" : $"{share:0}%", FontSize = 16, FontWeight = FontWeights.Bold, FontFamily = new FontFamily("Cascadia Mono, Consolas"), Foreground = Brush(Colors.White) });
-        value.Children.Add(new TextBlock { Text = S.T($"{Tokens(item.Tokens)} 토큰", $"{Tokens(item.Tokens)} tokens"), FontSize = 12, VerticalAlignment = VerticalAlignment.Bottom, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 0, 2), Foreground = Brush(Windows.UI.Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF)) });
+        var value = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(10, 0, 10, 6), VerticalAlignment = VerticalAlignment.Bottom };
+        value.Children.Add(new TextBlock { Text = share < 1 ? "<1%" : $"{share:0}%", FontSize = 16, FontWeight = FontWeight.Bold, FontFamily = Mono, Foreground = Brush(Colors.White) });
+        value.Children.Add(new TextBlock { Text = S.T($"{Tokens(item.Tokens)} 토큰", $"{Tokens(item.Tokens)} tokens"), FontSize = 12, VerticalAlignment = VerticalAlignment.Bottom, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 0, 2), Foreground = Brush(Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF)) });
         Grid.SetRow(value, 1);
         content.Children.Add(value);
 
         // 아래 띠 = 한도(게이지 기준 — [Part 254]). 모르면 채우지 않는다. 색은 남은 양.
-        var band = new Grid { Height = 5, Background = Brush(Windows.UI.Color.FromArgb(0x47, 0, 0, 0)) };
+        var band = new Grid { Height = 5, Background = Brush(Color.FromArgb(0x47, 0, 0, 0)) };
         if (item.Remaining is double remaining && Shown(remaining) is double fill)
         {
             band.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(fill, 0.01), GridUnitType.Star) });
@@ -745,8 +779,8 @@ public sealed class PopoverWindow : Window
         Grid.SetRow(band, 2);
         content.Children.Add(band);
 
-        var border = new Border { Background = Brush(item.Color), CornerRadius = new CornerRadius(6), Child = content };
-        ToolTipService.SetToolTip(border, S.T($"{item.Title} — 이번 달 {Tokens(item.Tokens)} 토큰 ({share:0.#}%)", $"{item.Title} — {Tokens(item.Tokens)} tokens this month ({share:0.#}%)"));
+        var border = new Border { Background = Brush(item.Color), CornerRadius = new CornerRadius(6), ClipToBounds = true, Child = content };
+        ToolTip.SetTip(border, S.T($"{item.Title} — 이번 달 {Tokens(item.Tokens)} 토큰 ({share:0.#}%)", $"{item.Title} — {Tokens(item.Tokens)} tokens this month ({share:0.#}%)"));
         return border;
     }
 
@@ -766,20 +800,22 @@ public sealed class PopoverWindow : Window
 
     // ── 부품 ────────────────────────────────────────────────
 
-    private static FrameworkElement ToolHeader(UsageSnapshot snap)
+    private static readonly FontFamily Mono = new("Cascadia Mono, Consolas");
+
+    private static Control ToolHeader(UsageSnapshot snap)
     {
         string text = snap.Plan is null ? snap.Tool : $"{snap.Tool} · {snap.Plan}";
         return new TextBlock
         {
             Text = text.ToUpper(CultureInfo.InvariantCulture),
             FontSize = 11,
-            CharacterSpacing = 80,
+            LetterSpacing = Spacing80,
             Foreground = Brush(Text2),
             Margin = new Thickness(0, 4, 0, 0),
         };
     }
 
-    private static FrameworkElement Dial(UsageWindow w)
+    private static Control Dial(UsageWindow w)
     {
         double? remain = w.RemainingPercent;
         double? shown = Shown(remain); // [Part 254] 바늘·호·숫자는 게이지 기준, 색은 남은 양
@@ -788,26 +824,26 @@ public sealed class PopoverWindow : Window
         for (int t = 0; t <= 10; t++)
         {
             double a = Math.PI * (1 - t / 10.0);
-            canvas.Children.Add(new Microsoft.UI.Xaml.Shapes.Line
+            canvas.Children.Add(new Avalonia.Controls.Shapes.Line
             {
-                X1 = 60 + 52 * Math.Cos(a), Y1 = 60 - 52 * Math.Sin(a),
-                X2 = 60 + 56 * Math.Cos(a), Y2 = 60 - 56 * Math.Sin(a),
+                StartPoint = new Point(60 + 52 * Math.Cos(a), 60 - 52 * Math.Sin(a)),
+                EndPoint = new Point(60 + 56 * Math.Cos(a), 60 - 56 * Math.Sin(a)),
                 Stroke = Brush(Hex("#475569")), StrokeThickness = 1.2,
             });
         }
 
         var track = Arc(1, Brush(Track));
-        if (remain is null) track.StrokeDashArray = new DoubleCollection { 1.2, 0.8 }; // 「모름」은 점선 — 0 으로 칠하지 않는다
+        if (remain is null) track.StrokeDashArray = new AvaloniaList<double> { 1.2, 0.8 }; // 「모름」은 점선 — 0 으로 칠하지 않는다
         canvas.Children.Add(track);
 
         if (remain is double rem && shown is double r)
         {
             if (r > 0.5) canvas.Children.Add(Arc(r / 100, Brush(LevelColor(rem))));
             double a = Math.PI * (1 - r / 100);
-            canvas.Children.Add(new Microsoft.UI.Xaml.Shapes.Line
+            canvas.Children.Add(new Avalonia.Controls.Shapes.Line
             {
-                X1 = 60, Y1 = 60, X2 = 60 + 36 * Math.Cos(a), Y2 = 60 - 36 * Math.Sin(a),
-                Stroke = Brush(Text1), StrokeThickness = 2.5, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+                StartPoint = new Point(60, 60), EndPoint = new Point(60 + 36 * Math.Cos(a), 60 - 36 * Math.Sin(a)),
+                Stroke = Brush(Text1), StrokeThickness = 2.5, StrokeLineCap = PenLineCap.Round,
             });
             var hub = new Ellipse { Width = 8, Height = 8, Fill = Brush(Text1) };
             Canvas.SetLeft(hub, 56);
@@ -820,7 +856,7 @@ public sealed class PopoverWindow : Window
         panel.Children.Add(new TextBlock
         {
             Text = shown is double rr ? $"{rr:0}%" : S.T("모름", "Unknown"),
-            FontSize = 14, FontWeight = FontWeights.Bold, FontFamily = new FontFamily("Cascadia Mono, Consolas"),
+            FontSize = 14, FontWeight = FontWeight.Bold, FontFamily = Mono,
             Foreground = Brush(remain is null ? Text2 : Text1), HorizontalAlignment = HorizontalAlignment.Center,
         });
         panel.Children.Add(Small(showUsed ? S.T($"{w.Label} 사용", $"{w.Label} used") : S.T($"{w.Label} 남음", $"{w.Label} left"), Text2));
@@ -829,27 +865,23 @@ public sealed class PopoverWindow : Window
     }
 
     /// <summary>반원(왼쪽→오른쪽)의 0~fraction 구간.</summary>
-    private static Path Arc(double fraction, Brush stroke)
+    private static Path Arc(double fraction, IBrush stroke)
     {
         static Point P(double f) => new(60 + 46 * Math.Cos(Math.PI * (1 - f)), 60 - 46 * Math.Sin(Math.PI * (1 - f)));
-        var figure = new PathFigure { StartPoint = P(0), IsClosed = false };
-        figure.Segments.Add(new ArcSegment
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
         {
-            Point = P(Math.Clamp(fraction, 0, 0.9999)),
-            Size = new Size(46, 46),
-            SweepDirection = SweepDirection.Clockwise,
-            IsLargeArc = false,
-        });
-        var geometry = new PathGeometry();
-        geometry.Figures.Add(figure);
+            ctx.BeginFigure(P(0), false);
+            ctx.ArcTo(P(Math.Clamp(fraction, 0, 0.9999)), new Size(46, 46), 0, false, SweepDirection.Clockwise);
+            ctx.EndFigure(false);
+        }
         return new Path
         {
-            Data = geometry, Stroke = stroke, StrokeThickness = 8,
-            StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+            Data = geometry, Stroke = stroke, StrokeThickness = 8, StrokeLineCap = PenLineCap.Round,
         };
     }
 
-    private static FrameworkElement BatteryRow(UsageWindow w)
+    private static Control BatteryRow(UsageWindow w)
     {
         double? remain = w.RemainingPercent;
         double? shown = Shown(remain); // [Part 254] 칸 수·숫자는 게이지 기준, 색은 남은 양
@@ -865,7 +897,7 @@ public sealed class PopoverWindow : Window
         };
 
         var label = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        label.Children.Add(new TextBlock { Text = w.Label, FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brush(Text1), TextTrimming = TextTrimming.CharacterEllipsis });
+        label.Children.Add(new TextBlock { Text = w.Label, FontSize = 12.5, FontWeight = FontWeight.SemiBold, Foreground = Brush(Text1), TextTrimming = TextTrimming.CharacterEllipsis });
         if (w.ResetsAt is { } reset) label.Children.Add(Small(Until(reset), Text2, HorizontalAlignment.Left));
         grid.Children.Add(label);
 
@@ -884,7 +916,7 @@ public sealed class PopoverWindow : Window
         var battery = new Border
         {
             Child = cells, Padding = new Thickness(3), CornerRadius = new CornerRadius(5),
-            BorderBrush = Brush(Windows.UI.Color.FromArgb(0x73, 0x94, 0xA3, 0xB8)), BorderThickness = new Thickness(1.5),
+            BorderBrush = Brush(Color.FromArgb(0x73, 0x94, 0xA3, 0xB8)), BorderThickness = new Thickness(1.5),
             HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(battery, 1);
@@ -893,7 +925,7 @@ public sealed class PopoverWindow : Window
         var value = new TextBlock
         {
             Text = shown is double v ? $"{v:0}%" : S.T("모름", "?"),
-            FontWeight = FontWeights.Bold, FontSize = 13, FontFamily = new FontFamily("Cascadia Mono, Consolas"),
+            FontWeight = FontWeight.Bold, FontSize = 13, FontFamily = Mono,
             Foreground = Brush(remain is double c ? LevelColor(c) : Text2),
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
         };
@@ -902,12 +934,12 @@ public sealed class PopoverWindow : Window
         return grid;
     }
 
-    private static FrameworkElement Timeline(List<(string Tool, UsageWindow Window)> items)
+    private static Control Timeline(List<(string Tool, UsageWindow Window)> items)
     {
         const double width = PopWidth - 28 - 20;
         var canvas = new Canvas { Width = width, Height = 62, Margin = new Thickness(10, 0, 10, 0) };
         double axisY = 40;
-        canvas.Children.Add(new Microsoft.UI.Xaml.Shapes.Line { X1 = 0, Y1 = axisY, X2 = width, Y2 = axisY, Stroke = Brush(Windows.UI.Color.FromArgb(0x59, 0x94, 0xA3, 0xB8)), StrokeThickness = 1 });
+        canvas.Children.Add(new Avalonia.Controls.Shapes.Line { StartPoint = new Point(0, axisY), EndPoint = new Point(width, axisY), Stroke = Brush(Color.FromArgb(0x59, 0x94, 0xA3, 0xB8)), StrokeThickness = 1 });
 
         var nowLocal = DateTimeOffset.Now;
         var startOfToday = new DateTimeOffset(nowLocal.Date, nowLocal.Offset);
@@ -950,7 +982,7 @@ public sealed class PopoverWindow : Window
             string first = PinName(pins[i].Tool, pins[i].W.Label);
             string text = j > i ? S.T($"{first} 외 {j - i}", $"{first} +{j - i}") : first;
             var tag = Small(text, Text1, HorizontalAlignment.Left);
-            ToolTipService.SetToolTip(tag, string.Join(Environment.NewLine, pins.Skip(i).Take(j - i + 1).Select(p => PinName(p.Tool, p.W.Label))));
+            ToolTip.SetTip(tag, string.Join(Environment.NewLine, pins.Skip(i).Take(j - i + 1).Select(p => PinName(p.Tool, p.W.Label))));
             Canvas.SetLeft(tag, Math.Min(pins[i].X - 4, width - 110));
             Canvas.SetTop(tag, axisY - 22 - (lane % 2) * 16);
             canvas.Children.Add(tag);
@@ -969,31 +1001,70 @@ public sealed class PopoverWindow : Window
         _ => label,
     };
 
-    private static Windows.UI.Color LevelColor(double remain) =>
+    private static Color LevelColor(double remain) =>
         remain >= 80 ? Lime : remain >= 30 ? Sky : remain >= 10 ? Orange : Red;
 
-    private static FrameworkElement Notice(string text, Windows.UI.Color tone) => new Border
+    private static Control Notice(string text, Color tone) => new Border
     {
         Padding = new Thickness(12, 9, 12, 9),
         CornerRadius = new CornerRadius(8),
-        Background = Brush(Windows.UI.Color.FromArgb(0x14, tone.R, tone.G, tone.B)),
-        BorderBrush = Brush(Windows.UI.Color.FromArgb(0x59, tone.R, tone.G, tone.B)),
+        Background = Brush(Color.FromArgb(0x14, tone.R, tone.G, tone.B)),
+        BorderBrush = Brush(Color.FromArgb(0x59, tone.R, tone.G, tone.B)),
         BorderThickness = new Thickness(1),
-        Child = new TextBlock { Text = text, FontSize = 12.5, TextWrapping = TextWrapping.Wrap, Foreground = Brush(Text1), LineHeight = 19 },
+        Child = new KeepTextBlock(text) { FontSize = 12.5, Foreground = Brush(Text1), LineHeight = 19 },
     };
 
     private static TextBlock Label(string text) => new()
     {
         // [Part 253] 자간 80 은 영문 대문자 라벨용 — 한글에 주면 「열 었 을 때」 처럼 어절이 벌어진다
-        Text = text, FontSize = 11, CharacterSpacing = S.IsKorean ? 0 : 80, Foreground = Brush(Text2), Margin = new Thickness(0, 6, 0, 0),
+        Text = text, FontSize = 11, LetterSpacing = S.IsKorean ? 0 : Spacing80, Foreground = Brush(Text2), Margin = new Thickness(0, 6, 0, 0),
     };
 
-    private static TextBlock Caption(string text) => new()
+    private static TextBlock Caption(string text) => new KeepTextBlock(text)
     {
-        Text = text, FontSize = 11, Foreground = Brush(Text2), TextWrapping = TextWrapping.Wrap,
+        FontSize = 11, Foreground = Brush(Text2),
     };
 
-    private static TextBlock Small(string text, Windows.UI.Color color, HorizontalAlignment align = HorizontalAlignment.Center) => new()
+    /// <summary>[Part 287] 줄바꿈되는 글자 — 화면에는 어절 유지본, 화면 읽기 이름에는 원문.
+    /// Avalonia 도 한글을 음절마다 끊었다(실측: 「않습니 / 다」). 해결은 Tools Part 271 의 KeepWords 와 같다.
+    /// Avalonia TextBlock 의 화면 읽기 이름은 AutomationProperties.Name 이 아니라 Text 다(실측: 이름에 U+2060 이 섞임)
+    /// → 이름만 원문을 돌려주는 피어를 붙인다.</summary>
+    private sealed class KeepTextBlock : TextBlock
+    {
+        private readonly string original;
+
+        public KeepTextBlock(string text)
+        {
+            original = text;
+            Text = KeepWords(text);
+            TextWrapping = TextWrapping.Wrap;
+        }
+
+        protected override Type StyleKeyOverride => typeof(TextBlock);
+
+        protected override Avalonia.Automation.Peers.AutomationPeer OnCreateAutomationPeer() => new Peer(this, original);
+
+        private sealed class Peer(TextBlock owner, string name) : Avalonia.Automation.Peers.TextBlockAutomationPeer(owner)
+        {
+            protected override string GetNameCore() => name;
+        }
+    }
+
+    /// <summary>한글 음절 사이에 단어 결합 문자(U+2060) — 띄어쓰기에서만 줄이 바뀐다(Tools Part 271).</summary>
+    private static string KeepWords(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length * 2);
+        for (int i = 0; i < text.Length; i++)
+        {
+            sb.Append(text[i]);
+            if (i + 1 < text.Length && IsHangul(text[i]) && IsHangul(text[i + 1])) sb.Append('⁠');
+        }
+        return sb.ToString();
+
+        static bool IsHangul(char c) => c is >= '가' and <= '힣';
+    }
+
+    private static TextBlock Small(string text, Color color, HorizontalAlignment align = HorizontalAlignment.Center) => new()
     {
         Text = text, FontSize = 11, Foreground = Brush(color), HorizontalAlignment = align, TextTrimming = TextTrimming.CharacterEllipsis,
     };
@@ -1002,13 +1073,14 @@ public sealed class PopoverWindow : Window
     {
         var b = new Button
         {
-            Content = new FontIcon { Glyph = glyph, FontSize = 14 },
-            Background = new SolidColorBrush(Colors.Transparent),
+            // Segoe Fluent Icons(Windows 11) · Segoe MDL2 Assets(Windows 10) — WinUI FontIcon 과 같은 글리프
+            Content = new TextBlock { Text = glyph, FontSize = 14, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets") },
+            Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(8),
         };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, name);
-        ToolTipService.SetToolTip(b, name);
+        AutomationProperties.SetName(b, name);
+        ToolTip.SetTip(b, name);
         return b;
     }
 
@@ -1070,30 +1142,16 @@ public sealed class PopoverWindow : Window
 
     // ── 유틸 ────────────────────────────────────────────────
 
-    private static SolidColorBrush Brush(Windows.UI.Color c) => new(c);
+    private static SolidColorBrush Brush(Color c) => new(c);
 
-    private static Windows.UI.Color Hex(string hex)
+    private static Color Hex(string hex)
     {
         hex = hex.TrimStart('#');
-        return Windows.UI.Color.FromArgb(0xFF,
+        return Color.FromArgb(0xFF,
             byte.Parse(hex[..2], NumberStyles.HexNumber),
             byte.Parse(hex[2..4], NumberStyles.HexNumber),
             byte.Parse(hex[4..6], NumberStyles.HexNumber));
     }
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
-
-    private delegate IntPtr SubclassProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, UIntPtr id, IntPtr data);
-
-    [DllImport("comctl32.dll")]
-    private static extern bool SetWindowSubclass(IntPtr hwnd, SubclassProc proc, UIntPtr id, IntPtr data);
-
-    [DllImport("comctl32.dll")]
-    private static extern bool RemoveWindowSubclass(IntPtr hwnd, SubclassProc proc, UIntPtr id);
-
-    [DllImport("comctl32.dll")]
-    private static extern IntPtr DefSubclassProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);

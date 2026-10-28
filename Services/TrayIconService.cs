@@ -1,46 +1,40 @@
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 using System.Windows.Input;
 using AiMeter.Models;
-using H.NotifyIcon;
-using H.NotifyIcon.Core;
-using Microsoft.UI.Xaml.Controls;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 namespace AiMeter.Services;
 
 // [Part 246] 트레이 아이콘 = 가장 높은 사용률을 링으로(시안 「아이콘 하나」). 70%↑ 노랑 / 90%↑ 빨강.
 // 값을 하나도 모르면 링을 비워 둔다(0% 로 그리지 않는다).
 // A 안(작업 표시줄 미니 스트립)은 2차 범위.
+// [Part 287] H.NotifyIcon(WinUI) → Avalonia TrayIcon. 링은 GDI+ 대신 Avalonia 그리기 — 맥 메뉴 막대에서도 같은 코드로 그린다.
 public sealed class TrayIconService : IDisposable
 {
-    private readonly TaskbarIcon icon;
-    private Icon? currentIcon;
-    private IntPtr currentHandle;
+    private readonly TrayIcon icon;
+    private readonly TrayIcons icons;
 
     public event Action? LeftClick;
     public event Action? ExitRequested;
 
-    public TrayIconService()
+    public TrayIconService(Application app)
     {
-        icon = new TaskbarIcon
+        icon = new TrayIcon
         {
             ToolTipText = "AiMeter",
-            NoLeftClickDelay = true,
-            ContextMenuMode = ContextMenuMode.PopupMenu,
-            LeftClickCommand = new Command(() => LeftClick?.Invoke()),
+            Menu = new NativeMenu
+            {
+                new NativeMenuItem(S.T("끝내기", "Exit")) { Command = new Command(() => ExitRequested?.Invoke()) },
+            },
         };
-
-        var menu = new MenuFlyout();
-        menu.Items.Add(new MenuFlyoutItem
-        {
-            Text = S.T("끝내기", "Exit"),
-            Command = new Command(() => ExitRequested?.Invoke()),
-        });
-        icon.ContextFlyout = menu;
+        icon.Clicked += (_, _) => LeftClick?.Invoke();
 
         Draw(null);
-        icon.ForceCreate();
+        icons = new TrayIcons { icon };
+        TrayIcon.SetIcons(app, icons);
+        icon.IsVisible = true;
     }
 
     /// <summary>[Part 254] 게이지 기준 — true 면 쓴 양, false 면 남은 양을 링 길이·툴팁 숫자로. 색은 늘 쓴 양 기준.</summary>
@@ -72,46 +66,45 @@ public sealed class TrayIconService : IDisposable
 
     private void Draw(double? usedPercent)
     {
-        using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp))
+        var bmp = new RenderTargetBitmap(new PixelSize(32, 32));
+        using (var g = bmp.CreateDrawingContext())
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-            using var track = new Pen(Color.FromArgb(120, 148, 163, 184), 6f);
-            g.DrawEllipse(track, 5, 5, 22, 22);
+            var center = new Point(16, 16);
+            g.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(120, 148, 163, 184)), 6), center, 11, 11);
 
             if (usedPercent is double used)
             {
-                var color = used >= 90 ? Color.FromArgb(0xF8, 0x71, 0x71)
-                    : used >= 70 ? Color.FromArgb(0xFA, 0xCC, 0x15)
-                    : Color.FromArgb(0x38, 0xBD, 0xF8);
-                using var pen = new Pen(color, 6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                var color = used >= 90 ? Color.FromRgb(0xF8, 0x71, 0x71)
+                    : used >= 70 ? Color.FromRgb(0xFA, 0xCC, 0x15)
+                    : Color.FromRgb(0x38, 0xBD, 0xF8);
                 double fill = ShowUsed ? used : 100 - used; // [Part 254] 링 길이는 게이지 기준, 색은 쓴 양
-                if (fill > 0) g.DrawArc(pen, 5, 5, 22, 22, -90, (float)(360 * Math.Min(fill, 100) / 100));
+                if (fill > 0) g.DrawGeometry(null, new Pen(new SolidColorBrush(color), 6, lineCap: PenLineCap.Round), Arc(center, 11, Math.Min(fill, 100) / 100));
             }
         }
+        icon.Icon = new WindowIcon(bmp);
+    }
 
-        IntPtr handle = bmp.GetHicon();
-        var next = Icon.FromHandle(handle);
-        icon.Icon = next;
-
-        // GetHicon 으로 만든 핸들은 직접 해제해야 GDI 핸들이 새지 않는다
-        currentIcon?.Dispose();
-        if (currentHandle != IntPtr.Zero) DestroyIcon(currentHandle);
-        currentIcon = next;
-        currentHandle = handle;
+    /// <summary>12시 방향에서 시계 방향으로 fraction(0~1) 만큼의 호.</summary>
+    private static Geometry Arc(Point c, double r, double fraction)
+    {
+        if (fraction >= 0.9999) return new EllipseGeometry(new Rect(c.X - r, c.Y - r, r * 2, r * 2));
+        double a = 2 * Math.PI * fraction;
+        var end = new Point(c.X + r * Math.Sin(a), c.Y - r * Math.Cos(a));
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(new Point(c.X, c.Y - r), false);
+            ctx.ArcTo(end, new Size(r, r), 0, fraction > 0.5, SweepDirection.Clockwise);
+            ctx.EndFigure(false);
+        }
+        return geo;
     }
 
     public void Dispose()
     {
+        icon.IsVisible = false;
         icon.Dispose();
-        currentIcon?.Dispose();
-        if (currentHandle != IntPtr.Zero) DestroyIcon(currentHandle);
-        currentHandle = IntPtr.Zero;
     }
-
-    [DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
 
     private sealed class Command(Action action) : ICommand
     {
