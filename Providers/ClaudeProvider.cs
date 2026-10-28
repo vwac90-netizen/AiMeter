@@ -33,7 +33,7 @@ public sealed partial class ClaudeProvider : IUsageProvider
     {
         LoadCache();
         http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("AiMeter/0.2.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("AiMeter/0.2.1");
     }
 
     public string Name => "Claude Code";

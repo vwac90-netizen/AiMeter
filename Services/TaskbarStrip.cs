@@ -15,6 +15,8 @@ namespace AiMeter.Services;
 //   → 픽셀 알파 레이어드 창(UpdateLayeredWindow)으로 그리고 배경 알파를 1 로 둔다(눈에 안 보이지만 전체가 클릭된다).
 // - 붙이지 못하면(작업 표시줄 없음·세로) 조용히 숨는다. 트레이 링 아이콘은 이것과 무관하게 항상 남는다(튕김 금지).
 // - 탐색기가 다시 시작되면 부모와 함께 이 창도 파괴된다 → 2초 틱에서 다시 만들어 붙인다.
+// - [Part 289] Windows 26300 에서 SetParent 가 오류 87 로 거부됐다 — 결과를 보지 않아 줄이 화면 맨 위(작업 표시줄 기준 좌표가 화면 기준이 됨)에 떴다.
+//   이제 실패를 감지하면 팝업 그대로 작업 표시줄의 같은 자리 위에 최상위로 띄운다(Tools MetricsStrip 처럼 실패를 확인).
 public sealed class TaskbarStrip : IDisposable
 {
     private const string ClassName = "AiMeter.TaskbarStrip";
@@ -33,6 +35,8 @@ public sealed class TaskbarStrip : IDisposable
     private bool light;
     private Rectangle lastRect;
     private int lastDpi;
+    private bool floating;      // [Part 289] SetParent 실패 — 작업 표시줄 위에 최상위 팝업으로 겹쳐 있다
+    private bool hiddenForFull; // [Part 289] 떠 있는 동안 전체 화면 앱이 앞에 있어 숨겼다
 
     public event Action? Click;
 
@@ -93,7 +97,11 @@ public sealed class TaskbarStrip : IDisposable
     {
         try
         {
+            // [Part 289] 떠 있는 줄은 작업 표시줄과 함께 파괴되지 않는다 — 탐색기가 다시 시작되면 버리고 다시 붙인다
+            if (IsDocked && floating && !IsWindow(taskbar)) DestroyStrip();
             if (!IsDocked && !TryDock()) return;
+            if (floating && appsTick % 15 == 0) RetryAttach(); // 30초마다
+            if (floating) HideForFullScreen();
             if (appsTick++ % 5 == 0) RefreshAppsEdge(); // [Part 255] 10초마다 — 창을 열고 닫으면 앱 버튼 수가 바뀐다
             bool nowLight = IsLightTaskbar();
             Layout(force: nowLight != light);
@@ -116,20 +124,48 @@ public sealed class TaskbarStrip : IDisposable
             0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
         if (created == IntPtr.Zero) return false;
 
-        SetParent(created, taskbar);
-        long style = GetWindowLongPtr(created, GWL_STYLE).ToInt64();
-        SetWindowLongPtr(created, GWL_STYLE, new IntPtr((style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE));
+        floating = !Attach(created);
         hwnd = created;
+        hiddenForFull = false;
         lastRect = Rectangle.Empty;
         light = IsLightTaskbar();
         Layout(force: true);
         return true;
     }
 
+    /// <summary>[Part 289] 작업 표시줄 자식으로 넣는다. 실패하면 자식 스타일로 바꾸지 않는다 — 바꾸면 부모가 바탕 화면인 채 (x, 0) 이 화면 맨 위가 된다.</summary>
+    private bool Attach(IntPtr window)
+    {
+        if (SetParent(window, taskbar) == IntPtr.Zero && Marshal.GetLastWin32Error() != 0) return false;
+        long style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
+        SetWindowLongPtr(window, GWL_STYLE, new IntPtr((style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE));
+        return true;
+    }
+
+    /// <summary>[Part 289] 거부는 한동안만 일어났다(13시 오류 87 → 몇 분 뒤 성공, 같은 PC) — 떠 있으면 가끔 다시 붙여 본다. 붙으면 원래 방식으로.</summary>
+    private void RetryAttach()
+    {
+        if (!Attach(hwnd)) return;
+        floating = false;
+        if (hiddenForFull) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        hiddenForFull = false;
+        lastRect = Rectangle.Empty;
+    }
+
     private void DestroyStrip()
     {
         if (hwnd != IntPtr.Zero && IsWindow(hwnd)) DestroyWindow(hwnd);
         hwnd = IntPtr.Zero;
+        floating = false;
+    }
+
+    /// <summary>[Part 289] 떠 있는 줄은 맨 위라 전체 화면 게임·영상 위에도 남는다(자식일 때는 작업 표시줄과 함께 가려졌다) — 그동안 숨긴다.</summary>
+    private void HideForFullScreen()
+    {
+        bool full = SHQueryUserNotificationState(out int state) == 0 && state is 2 or 3 or 4; // BUSY · D3D 전체 화면 · 프레젠테이션
+        if (full == hiddenForFull) return;
+        hiddenForFull = full;
+        ShowWindow(hwnd, full ? SW_HIDE : SW_SHOWNOACTIVATE);
     }
 
     // ── 배치 + 그리기 ───────────────────────────────────────────
@@ -152,7 +188,14 @@ public sealed class TaskbarStrip : IDisposable
         int x = Math.Clamp(trayLeft - tr.Left - width - (int)(4 * s), 0, Math.Max(0, tr.Right - tr.Left - width));
         var rect = new Rectangle(x, 0, width, height);
 
-        if (rect != lastRect)
+        if (floating)
+        {
+            // [Part 289] 화면 좌표로 · 매번 맨 위를 다시 잡는다(작업 표시줄을 누르면 그 아래로 내려간다) · 숨긴 동안은 보이지 않게
+            SetWindowPos(hwnd, HWND_TOPMOST, tr.Left + rect.X, tr.Top + rect.Y, rect.Width, rect.Height,
+                SWP_NOACTIVATE | (hiddenForFull ? 0 : SWP_SHOWWINDOW));
+            if (rect != lastRect) force = true;
+        }
+        else if (rect != lastRect)
         {
             SetWindowPos(hwnd, IntPtr.Zero, rect.X, rect.Y, rect.Width, rect.Height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
             force = true;
@@ -435,6 +478,9 @@ public sealed class TaskbarStrip : IDisposable
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_SHOWWINDOW = 0x0040;
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private const int SW_HIDE = 0;
+    private const int SW_SHOWNOACTIVATE = 4;
 
     private delegate IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -499,6 +545,8 @@ public sealed class TaskbarStrip : IDisposable
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
     [DllImport("user32.dll")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT tme);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int cmd);
+    [DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int state);
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
